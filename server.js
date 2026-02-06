@@ -36,7 +36,7 @@ app.post('/extract-stream', async (req, res) => {
 
     const response = await connect({
       headless: false,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--autoplay-policy=no-user-gesture-required'],
       turnstile: true,
       disableXvfb: false
     });
@@ -66,8 +66,8 @@ app.post('/extract-stream', async (req, res) => {
     console.log('   ✅ Page loaded');
 
     // Wait for CF to resolve
-    console.log('   ⏳ Waiting for CF challenge...');
-    await new Promise(r => setTimeout(r, 8000));
+    console.log('   ⏳ Waiting for CF challenge (5s)...');
+    await new Promise(r => setTimeout(r, 5000));
 
     if (m3u8Urls.length > 0) {
       console.log('   ✅ Found M3U8 after CF bypass');
@@ -75,71 +75,68 @@ app.post('/extract-stream', async (req, res) => {
       return res.json({ success: true, m3u8Url: m3u8Urls[0] });
     }
 
-    // Try to click on player elements
-    console.log('   🖱️ Looking for player to click...');
-    const playerSelectors = [
-      'video', '.player', '#player', '.video-player',
-      'iframe', '.play-btn', '[class*="play"]', '.plyr',
-      '.vjs-big-play-button', '.jw-icon-playback'
-    ];
+    // Click in center of page to trigger player
+    console.log('   🖱️ Clicking center of page...');
+    const viewport = page.viewport();
+    await page.mouse.click(viewport.width / 2, viewport.height / 2);
+    await new Promise(r => setTimeout(r, 3000));
 
-    for (const selector of playerSelectors) {
+    if (m3u8Urls.length > 0) {
+      console.log('   ✅ Found M3U8 after center click');
+      await browser.close();
+      return res.json({ success: true, m3u8Url: m3u8Urls[0] });
+    }
+
+    // Find and click inside iframes
+    console.log('   🔍 Searching iframes...');
+    const iframes = await page.$$('iframe');
+    console.log(`   📋 Found ${iframes.length} iframe(s)`);
+
+    for (let i = 0; i < iframes.length; i++) {
       try {
-        const el = await page.$(selector);
-        if (el) {
-          console.log(`   🎯 Clicking: ${selector}`);
-          await el.click().catch(() => { });
-          await new Promise(r => setTimeout(r, 3000));
+        const box = await iframes[i].boundingBox();
+        if (box && box.width > 100 && box.height > 100) {
+          console.log(`   🎯 Clicking iframe ${i + 1} at center (${Math.round(box.x + box.width / 2)}, ${Math.round(box.y + box.height / 2)})`);
+          await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+          await new Promise(r => setTimeout(r, 5000));
 
           if (m3u8Urls.length > 0) {
-            console.log('   ✅ Found M3U8 after click');
+            console.log('   ✅ Found M3U8 after iframe click');
             await browser.close();
             return res.json({ success: true, m3u8Url: m3u8Urls[0] });
           }
         }
-      } catch (e) { }
-    }
-
-    // Check iframes deeply
-    console.log('   🔍 Deep iframe search...');
-    const frames = page.frames();
-    console.log(`   📋 Found ${frames.length} frame(s)`);
-
-    for (const frame of frames) {
-      const frameUrl = frame.url();
-      if (frameUrl && !frameUrl.includes('about:') && !frameUrl.includes('cloudflare')) {
-        console.log(`   📌 Frame: ${frameUrl.substring(0, 60)}...`);
-
-        // Try to click in iframe
-        try {
-          await frame.click('video, .player, [class*="play"]').catch(() => { });
-          await new Promise(r => setTimeout(r, 2000));
-        } catch (e) { }
-
-        // Search iframe for M3U8
-        try {
-          const frameM3U8 = await frame.evaluate(() => {
-            const html = document.documentElement?.innerHTML || '';
-            const match = html.match(/(https?:\/\/[^"'\s<>\\]+\.m3u8[^"'\s<>\\]*)/i);
-            return match ? match[0] : null;
-          });
-          if (frameM3U8) {
-            console.log('   ✅ Found M3U8 in iframe');
-            await browser.close();
-            return res.json({ success: true, m3u8Url: frameM3U8 });
-          }
-        } catch (e) { }
+      } catch (e) {
+        console.log(`   ⚠️ Iframe ${i + 1} click failed: ${e.message}`);
       }
     }
 
     // Extended wait for dynamic loading
-    console.log('   ⏳ Extended wait (15s)...');
-    await new Promise(r => setTimeout(r, 15000));
+    console.log('   ⏳ Extended wait (20s)...');
+    await new Promise(r => setTimeout(r, 20000));
 
     if (m3u8Urls.length > 0) {
       console.log('   ✅ Found M3U8 after extended wait');
       await browser.close();
       return res.json({ success: true, m3u8Url: m3u8Urls[0] });
+    }
+
+    // Search in all frames for M3U8 in HTML
+    console.log('   🔍 Deep frame search...');
+    const frames = page.frames();
+    for (const frame of frames) {
+      try {
+        const frameM3U8 = await frame.evaluate(() => {
+          const html = document.documentElement?.innerHTML || '';
+          const match = html.match(/(https?:\/\/[^"'\s<>\\]+\.m3u8[^"'\s<>\\]*)/i);
+          return match ? match[0] : null;
+        });
+        if (frameM3U8) {
+          console.log('   ✅ Found M3U8 in frame HTML');
+          await browser.close();
+          return res.json({ success: true, m3u8Url: frameM3U8 });
+        }
+      } catch (e) { }
     }
 
     // Final DOM search
