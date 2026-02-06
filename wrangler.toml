@@ -1,0 +1,9 @@
+name = "fctv-stream-extractor"
+main = "cloudflare-worker.js"
+compatibility_date = "2024-01-01"
+
+# Optional: Account ID (get from Cloudflare dashboard)
+# account_id = "your-account-id"
+
+[vars]
+ENVIRONMENT = "production"
