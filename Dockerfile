@@ -1,9 +1,10 @@
 FROM node:20-slim
 
-# Install Chrome dependencies
+# Install Chromium and dependencies
 RUN apt-get update && apt-get install -y \
     chromium \
     fonts-liberation \
+    fonts-noto-color-emoji \
     libasound2 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
@@ -19,12 +20,15 @@ RUN apt-get update && apt-get install -y \
     libxdamage1 \
     libxrandr2 \
     xdg-utils \
+    xvfb \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Set Chrome path
+# Set Chrome path for puppeteer-real-browser
+ENV CHROME_PATH=/usr/bin/chromium
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV DISPLAY=:99
 
 WORKDIR /app
 
@@ -37,8 +41,9 @@ RUN npm ci --only=production
 # Copy source
 COPY . .
 
-# Expose port
-EXPOSE 3000
+# Expose port (Cloud Run uses 8080)
+ENV PORT=8080
+EXPOSE 8080
 
-# Start server
-CMD ["node", "server.js"]
+# Start with Xvfb for virtual display
+CMD Xvfb :99 -screen 0 1920x1080x24 & node server.js
